@@ -42,32 +42,50 @@ app.get('/api/seats', async (req, res) => {
 });
 
 // Route to handle seat reservation
+// Route to handle seat reservation
+// Route to handle seat reservation
 app.post('/api/reserve', async (req, res) => {
   try {
     const numSeats = parseInt(req.body.numSeats, 10);
-    const availableSeats = await Seat.find({ isBooked: false }).limit(numSeats);
+    const allSeats = await Seat.find();
+    const reservedSeats = [];
 
-    if (availableSeats.length < numSeats) {
+    // Find available seats in the same row
+    for (const seat of allSeats) {
+      if (reservedSeats.length >= numSeats) break; // Exit loop if desired number of seats is reserved
+
+      if (!seat.isBooked && !reservedSeats.includes(seat.seatNumber)) {
+        const rowSeats = allSeats.filter((s) => s.row === seat.row && !reservedSeats.includes(s.seatNumber));
+        if (rowSeats.length >= numSeats) {
+          reservedSeats.push(...rowSeats.slice(0, numSeats).map((s) => s.seatNumber));
+          break; // Exit loop if desired number of seats is reserved in the same row
+        }
+      }
+    }
+
+    // If desired number of seats is not available in the same row, book nearby seats
+    if (reservedSeats.length < numSeats) {
+      const nearbySeats = allSeats
+        .filter((seat) => !reservedSeats.includes(seat.seatNumber))
+        .sort((a, b) => Math.abs(a.row - b.row) + Math.abs(a.seatNumber - b.seatNumber)); // Sort seats by row and seat number distance
+      reservedSeats.push(...nearbySeats.slice(0, numSeats - reservedSeats.length).map((s) => s.seatNumber));
+    }
+
+    // If seats are not available, return an error
+    if (reservedSeats.length < numSeats) {
       return res.status(400).json({ error: 'Not enough available seats' });
     }
 
-    const reservedSeats = [];
+    // Update the booked seats in the database
+    await Seat.updateMany({ seatNumber: { $in: reservedSeats } }, { isBooked: true });
 
-    for (const seat of availableSeats) {
-      seat.isBooked = true;
-      await seat.save();
-      reservedSeats.push(seat.seatNumber);
-    }
+    const availableCount = allSeats.filter((seat) => !reservedSeats.includes(seat.seatNumber) && !seat.isBooked).length;
 
-    res.json({ reservedSeats });
+    res.json({ reservedSeats, availableSeats: availableCount });
   } catch (error) {
     console.error('Error reserving seats:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// Catch-all route to serve index.html for any other routes
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
 
